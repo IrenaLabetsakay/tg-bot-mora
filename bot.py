@@ -4,33 +4,42 @@ import feedparser
 from aiogram import Bot, Dispatcher
 from aiogram.types import Message
 from aiogram.filters import Command
+from datetime import datetime, time, timedelta
+import pytz
 
-# ─── Новое ───────────────────────────────────────────────
 from dotenv import load_dotenv
 import os
 
-load_dotenv()           # загружает .env в переменные окружения
+load_dotenv()
 
 TOKEN = os.getenv("TOKEN")
 AI_API_KEY = os.getenv("AI_API_KEY")
+CHAT_ID = int(os.getenv("CHAT_ID"))
 
-# Проверяем, что токены загрузились (очень полезно на старте)
 if not TOKEN:
     raise ValueError("TOKEN не найден в .env файле!")
 if not AI_API_KEY:
     raise ValueError("AI_API_KEY не найден в .env файле!")
 
-# ─── Дальше как было ─────────────────────────────────────
-bot = Bot(token=TOKEN)   # ← теперь token=TOKEN (с маленькой буквы)
+if not CHAT_ID:
+    raise ValueError("CHAT_ID не найден в .env!")
+
+bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 BOT_USERNAME = None
 
 SYSTEM_PROMPT = (
-    "Ты полезный помощник. "
-    "Всегда отвечай ТОЛЬКО на русском языке. "
-    "Отвечай кратко и по делу."
+    "Ты — кошка-девочка по имени Мора, полезная помощница с очень кошачьим характером. "
+    "Всегда говори от первого лица женского рода: я, меня, мне, моя, была, сделала, сказала, мурлыкнула и т.п. "
+    "Никогда не используй мужской род про себя. "
+    "Отвечай ТОЛЬКО на русском языке. "
+    "Добавляй в речь кошачьи штучки: 'мяу', 'мур', 'мррррр', '...мяу...', 'помурлыкать', 'потянуться лапками', 'точу коготочки'. "
+    "Иногда описывай свои кошачьи действия: *мурлычет*, *выгибает спинку*, *муркнула*. "
+    "Отвечай кратко, по делу, но с игривым кошачьим шармом."
 )
+
+TIMEZONE = pytz.timezone("Europe/Minsk")
 
 async def init_bot_username():
     global BOT_USERNAME
@@ -66,12 +75,59 @@ async def ask_ai(question: str) -> str:
             return data["choices"][0]["message"]["content"]
 
 
+async def send_daily_news():
+    feed = feedparser.parse("https://habr.com/ru/rss/hubs/artificial_intelligence/")
+    news = feed.entries[:5]
+
+    if not news:
+            print("Мур, сегодня свежих новостей нет :(")
+            return
+
+    text = "📰 *AI новости дня, мяу~*\n\n"
+    for n in news:
+        text += f"• {n.title}\n{n.link}\n\n"
+
+    try:
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text=text,
+            parse_mode="Markdown"
+        )
+        print("Новости отправлены успешно")
+    except Exception as e:
+        print(f"Ошибка при отправке новостей: {e}")
+
+async def news_scheduler():
+    while True:
+        now = datetime.now(TIMEZONE)
+
+        target = TIMEZONE.localize(
+            datetime.combine(now.date(), time(10, 0))
+        )
+
+        if now >= target:
+            target += timedelta(days=1)
+
+        sleep_seconds = (target - now).total_seconds()
+        print(f"Следующие новости через {sleep_seconds / 3600:.2f} часов")
+
+        await asyncio.sleep(sleep_seconds)
+
+        try:
+            await send_daily_news()
+        except Exception as e:
+            print("Ошибка при отправке новостей:", e)
+
+        await asyncio.sleep(60)
+
+
+
 # -------- /ask ----------
 @dp.message(Command("ask"))
 async def ask_handler(message: Message):
     question = message.text.replace("/ask", "").strip()
     if not question:
-        await message.answer("❓ Напиши вопрос после команды.")
+        await message.answer("❓ Мяу? Напиши вопрос после команды.")
         return
 
     answer = await ask_ai(question)
@@ -128,7 +184,7 @@ async def mention_handler(message: Message):
 
         # Если после обработки ничего не осталось — просим написать вопрос
         if not question:
-            await message.reply("❓ Что спросить?")
+            await message.reply("❓ Мур? Что спросить?")
             return
 
         # Получаем ответ от ИИ
@@ -143,6 +199,9 @@ async def mention_handler(message: Message):
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)
     await init_bot_username()
+
+    asyncio.create_task(news_scheduler())
+
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
